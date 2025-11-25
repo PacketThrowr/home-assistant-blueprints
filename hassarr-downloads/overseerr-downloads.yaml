@@ -1,0 +1,180 @@
+blueprint:
+  name: LLM Script for Overseerr (Hassarr) requests
+  description: >
+    Creates a script which allows voice / LLM requests to add a movie or TV show
+    to Overseerr using the Hassarr integration.
+
+    ## How this script is used
+
+    This script is intended to be used as a "tool" by an LLM (e.g. Assist, OpenAI, etc.).
+    The LLM should call this script whenever the user asks to download or request
+    a movie or TV show.
+
+    The script exposes the following arguments:
+
+    - media_type: "movie" or "tv"
+    - title: The title of the movie or TV show to request in Overseerr.
+    - (optional) media_description: extra description from the user query
+      that might help disambiguate (year, language, etc.).
+
+    The script will call:
+    - hassarr.add_overseerr_movie when media_type == "movie"
+    - hassarr.add_overseerr_tv_show when media_type == "tv"
+
+    You can optionally add extra actions after the Overseerr request
+    (for example, send a notification, turn on bias lighting, etc.).
+
+    ## Example script description (for Assist / LLM)
+
+    `This script is used to request or download a movie or TV show in Overseerr.
+    The tool takes the following arguments: media_type, title, media_description.
+    "media_type" must be "movie" or "tv" and is required. "title" is required and
+    must be the exact or best possible title of the requested media. "media_description"
+    is optional and can include extra info such as release year or language.
+    Use this tool whenever the user asks to download / request / add a movie or TV show,
+    or when they say things like "add this to Overseerr", "download {movie}", or
+    "grab the TV show {title}".`
+  domain: script
+  author: you
+  homeassistant:
+    min_version: 2024.6.0
+
+  input:
+    prompt_settings:
+      name: Prompt settings for the LLM
+      icon: mdi:robot
+      description: >
+        You can use these settings to fine-tune the prompts for your specific LLM.
+        In most cases the defaults are fine.
+      collapsed: true
+      input:
+        media_type_prompt:
+          name: Media Type Prompt
+          description: The prompt that the LLM will use to provide the media_type.
+          selector:
+            text:
+              multiline: true
+          default: >
+            This argument is mandatory and must always be provided.
+
+            "media_type" can only be one of the following values:
+            - "movie" when the user is asking about a film / movie.
+            - "tv" when the user is asking about a TV show or series.
+
+            If the request clearly refers to a movie (e.g. "download Inception"),
+            use "movie".
+
+            If the request clearly refers to a TV show or series (e.g. "download
+            all seasons of Breaking Bad"), use "tv".
+        title_prompt:
+          name: Title Prompt
+          description: The prompt that the LLM will use to provide the title.
+          selector:
+            text:
+              multiline: true
+          default: >
+            "title" is mandatory and must always be provided.
+
+            It must be the best possible title of the requested movie or TV show.
+
+            If the user clearly mentions the title, use that exact wording
+            (minus generic words like "the movie" or "the show" unless they are
+            part of the title).
+
+            Examples:
+            - User: "Download the movie Inception" -> title = "Inception"
+            - User: "Grab the TV show Breaking Bad" -> title = "Breaking Bad"
+        media_description_prompt:
+          name: Media Description Prompt
+          description: Prompt that the LLM will use to provide an optional description.
+          selector:
+            text:
+              multiline: true
+          default: >
+            "media_description" is optional. Use it to pass extra information
+            that might help Overseerr find the correct item:
+            - release year
+            - language
+            - version (extended, director's cut, etc.)
+            - season info for TV when requested
+
+            If the request contains no extra relevant info, use an empty string.
+
+    addition_conditions_actions:
+      name: Additional actions
+      icon: mdi:wrench
+      description: >
+        You can add additional actions to be performed after the Overseerr request
+        is made. The variables media_type, title, and media_description are
+        always available for use in these extra actions.
+      collapsed: true
+      input:
+        actions:
+          name: Additional actions
+          selector:
+            action: {}
+          default: []
+
+mode: parallel
+max_exceeded: silent
+description: >
+  This script is used to add movies or TV shows to Overseerr based on a voice/LLM
+  request. Use the parameters as described in the prompts for media_type, title,
+  and media_description.
+
+fields:
+  media_type:
+    name: Media Type
+    description: !input media_type_prompt
+    required: true
+    selector:
+      select:
+        options:
+          - movie
+          - tv
+  title:
+    name: Title
+    description: !input title_prompt
+    required: true
+    selector:
+      text:
+  media_description:
+    name: Media Description
+    description: !input media_description_prompt
+    required: false
+    selector:
+      text:
+
+sequence:
+  - variables:
+      version: 20251124
+      media_type: "{{ media_type }}"
+      title: "{{ title }}"
+      media_description: "{{ media_description | default('', true) }}"
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ media_type == 'movie' }}"
+        sequence:
+          - alias: Add movie to Overseerr via Hassarr
+            action: hassarr.add_overseerr_movie
+            data:
+              title: "{{ title }}"
+              # Optionally pass description if supported by your Hassarr setup
+              # description: "{{ media_description }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ media_type == 'tv' }}"
+        sequence:
+          - alias: Add TV show to Overseerr via Hassarr
+            action: hassarr.add_overseerr_tv_show
+            data:
+              title: "{{ title }}"
+              # Optionally pass description if supported
+              # description: "{{ media_description }}"
+    default:
+      - stop: Invalid media_type for Overseerr LLM script
+        response_variable: invalid_media_type
+
+  - sequence: !input actions
